@@ -2,7 +2,7 @@
 
 use std::str;
 use std::io;
-use std::io::{MemWriter, Writer, IoResult, MemReader, Reader, InvalidInput};
+use std::io::{Writer, IoResult, Reader, InvalidInput};
 use std::result::{Err, Ok};
 
 macro_rules! fail_if_err(
@@ -24,7 +24,7 @@ macro_rules! unwrap_return_err(
 )
 
 
-trait OscType : Send {
+pub trait OscType : Send {
   fn write_to(&self, out: &mut Writer) -> IoResult<()>;
   fn type_tag(&self) -> char;
   fn from_reader(reader: &mut Reader) -> IoResult<Self>;
@@ -139,7 +139,7 @@ impl OscType for f32 {
 
 
 
-struct OscMessage {
+pub struct OscMessage {
   // structure: addr pattern string tt string, zero or more arguments
   address: ~str,
   arguments: ~[~OscType]
@@ -213,114 +213,115 @@ impl OscMessage {
   }
 }
 
-#[test]
-fn test_write_osc_string() {
-  let expected = (~"asdf\0\0\0\0").into_bytes();
-  let mut writer = MemWriter::new();
-  fail_if_err!((~"asdf").write_to(&mut writer));
+#[cfg(test)]
+mod test {
+  use std::io::{MemWriter, IoResult, MemReader};
+  use super::{OscType, OscMessage};
 
-  assert_eq!(writer.unwrap(), expected);
-}
+  #[test]
+  fn test_write_osc_string() {
+    let expected = (~"asdf\0\0\0\0").into_bytes();
+    let mut writer = MemWriter::new();
+    fail_if_err!((~"asdf").write_to(&mut writer));
 
-#[test]
-fn test_read_osc_string() {
-  let data = (~"asdf\0\0\0\0").into_bytes();
-  let mut reader = MemReader::new(data);
-  let actual: IoResult<~str> = OscType::from_reader(&mut reader);
-  match actual {
-    Ok(val) => assert_eq!(val, ~"asdf"),
-    e => fail!("error: {}", e)
+    assert_eq!(writer.unwrap(), expected);
+  }
+
+  #[test]
+  fn test_read_osc_string() {
+    let data = (~"asdf\0\0\0\0").into_bytes();
+    let mut reader = MemReader::new(data);
+    let actual: IoResult<~str> = OscType::from_reader(&mut reader);
+    match actual {
+      Ok(val) => assert_eq!(val, ~"asdf"),
+      e => fail!("error: {}", e)
+    }
+  }
+
+
+  #[test]
+  fn test_write_osc_blob() {
+    let expected = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
+    let mut writer = MemWriter::new();
+    fail_if_err!((~[1u8, 2u8, 3u8, 4u8, 5u8]).write_to(&mut writer));
+
+    assert_eq!(writer.unwrap(), expected);
+  }
+
+  #[test]
+  fn test_read_osc_blob() {
+    let data = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
+    let mut reader = MemReader::new(data);
+    let actual: IoResult<~[u8]> = OscType::from_reader(&mut reader);
+    match actual {
+      Ok(val) => assert_eq!(val, ~[1u8, 2u8, 3u8, 4u8, 5u8]),
+      e => fail!("error: {}", e)
+    }
+  }
+
+  #[test]
+  fn test_write_osc_i32() {
+    let expected = ~[00u8, 0x11u8, 0x22u8, 0x33u8];
+    let mut writer = MemWriter::new();
+    fail_if_err!((0x00112233).write_to(&mut writer));
+
+    assert_eq!(writer.unwrap(), expected);
+  }
+
+
+  #[test]
+  fn test_read_osc_i32() {
+    let data = ~[00u8, 0x11u8, 0x22u8, 0x33u8];
+    let mut reader = MemReader::new(data);
+    let actual: IoResult<i32> = OscType::from_reader(&mut reader);
+    match actual {
+      Ok(val) => assert_eq!(val, 0x00112233),
+      e => fail!("error: {}", e)
+    }
+  }
+
+  #[test]
+  fn test_write_osc_f32() {
+    let expected = ~[63u8, 157u8, 243u8, 182u8];
+    let mut writer = MemWriter::new();
+    fail_if_err!((1.234).write_to(&mut writer));
+
+    assert_eq!(writer.unwrap(), expected);
+  }
+
+  #[test]
+  fn test_read_osc_f32() {
+    let data = ~[63u8, 157u8, 243u8, 182u8];
+    let mut reader = MemReader::new(data);
+    let actual: IoResult<f32> = OscType::from_reader(&mut reader);
+    match actual {
+      Ok(val) => assert_eq!(val, 1.234),
+      e => fail!("error: {}", e)
+    }
+  }
+
+  #[test]
+  fn test_write_osc_message() {
+    let expected = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
+    let mut writer = MemWriter::new();
+    let msg = OscMessage { address: ~"/test/do", arguments: ~[~~"Hello" as ~OscType, ~~"world" as ~OscType] };
+    fail_if_err!(msg.write_to(&mut writer));
+    assert_eq!(writer.unwrap(), expected);
+  }
+
+  #[test]
+  fn test_read_osc_message() {
+    let data = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
+    let mut reader = MemReader::new(data);
+    let actual: IoResult<~OscMessage> = OscMessage::from_reader(&mut reader);
+    match actual {
+      Ok(msg) => {
+        assert_eq!(msg.address, ~"/test/do");
+        assert_eq!(msg.arguments.len(), 2);
+        println!("what0: {:?}", msg.arguments[0]);
+        println!("what1: {:?}", msg.arguments[1]);
+      },
+      e => fail!("error: {:?}", e)
+    }
   }
 }
-
-
-#[test]
-fn test_write_osc_blob() {
-  let expected = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
-  let mut writer = MemWriter::new();
-  fail_if_err!((~[1u8, 2u8, 3u8, 4u8, 5u8]).write_to(&mut writer));
-
-  assert_eq!(writer.unwrap(), expected);
-}
-
-#[test]
-fn test_read_osc_blob() {
-  let data = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
-  let mut reader = MemReader::new(data);
-  let actual: IoResult<~[u8]> = OscType::from_reader(&mut reader);
-  match actual {
-    Ok(val) => assert_eq!(val, ~[1u8, 2u8, 3u8, 4u8, 5u8]),
-    e => fail!("error: {}", e)
-  }
-}
-
-#[test]
-fn test_write_osc_i32() {
-  let expected = ~[00u8, 0x11u8, 0x22u8, 0x33u8];
-  let mut writer = MemWriter::new();
-  fail_if_err!((0x00112233).write_to(&mut writer));
-
-  assert_eq!(writer.unwrap(), expected);
-}
-
-
-#[test]
-fn test_read_osc_i32() {
-  let data = ~[00u8, 0x11u8, 0x22u8, 0x33u8];
-  let mut reader = MemReader::new(data);
-  let actual: IoResult<i32> = OscType::from_reader(&mut reader);
-  match actual {
-    Ok(val) => assert_eq!(val, 0x00112233),
-    e => fail!("error: {}", e)
-  }
-}
-
-#[test]
-fn test_write_osc_f32() {
-  let expected = ~[63u8, 157u8, 243u8, 182u8];
-  let mut writer = MemWriter::new();
-  fail_if_err!((1.234).write_to(&mut writer));
-
-  assert_eq!(writer.unwrap(), expected);
-}
-
-#[test]
-fn test_read_osc_f32() {
-  let data = ~[63u8, 157u8, 243u8, 182u8];
-  let mut reader = MemReader::new(data);
-  let actual: IoResult<f32> = OscType::from_reader(&mut reader);
-  match actual {
-    Ok(val) => assert_eq!(val, 1.234),
-    e => fail!("error: {}", e)
-  }
-}
-
-#[test]
-fn test_write_osc_message() {
-  let expected = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
-  let mut writer = MemWriter::new();
-  let msg = OscMessage { address: ~"/test/do", arguments: ~[~~"Hello" as ~OscType, ~~"world" as ~OscType] };
-  fail_if_err!(msg.write_to(&mut writer));
-  assert_eq!(writer.unwrap(), expected);
-}
-
-#[test]
-fn test_read_osc_message() {
-  let data = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
-  let mut reader = MemReader::new(data);
-  let actual: IoResult<~OscMessage> = OscMessage::from_reader(&mut reader);
-  match actual {
-    Ok(msg) => {
-      assert_eq!(msg.address, ~"/test/do");
-      assert_eq!(msg.arguments.len(), 2);
-      println!("what0: {:?}", msg.arguments[0]);
-      println!("what1: {:?}", msg.arguments[1]);
-    },
-    e => {} // fail!("error: {:?}", e)
-  }
-}
-
-
-
-
-
