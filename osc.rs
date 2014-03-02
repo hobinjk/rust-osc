@@ -5,15 +5,6 @@ use std::io;
 use std::io::{Writer, IoResult, Reader, InvalidInput};
 use std::result::{Err, Ok};
 
-macro_rules! fail_if_err(
-  ($inp:expr) => (
-    match $inp {
-      Err(res) => fail!(format!("error: {}", res)),
-      _ => {}
-    }
-  );
-)
-
 macro_rules! unwrap_return_err(
   ($inp:expr) => (
     match $inp {
@@ -222,7 +213,7 @@ mod test {
   fn test_write_osc_string() {
     let expected = (~"asdf\0\0\0\0").into_bytes();
     let mut writer = MemWriter::new();
-    fail_if_err!((~"asdf").write_to(&mut writer));
+    (~"asdf").write_to(&mut writer).unwrap(); // fail if err returned
 
     assert_eq!(writer.unwrap(), expected);
   }
@@ -243,7 +234,7 @@ mod test {
   fn test_write_osc_blob() {
     let expected = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
     let mut writer = MemWriter::new();
-    fail_if_err!((~[1u8, 2u8, 3u8, 4u8, 5u8]).write_to(&mut writer));
+    (~[1u8, 2u8, 3u8, 4u8, 5u8]).write_to(&mut writer).unwrap(); // fail if err
 
     assert_eq!(writer.unwrap(), expected);
   }
@@ -263,7 +254,7 @@ mod test {
   fn test_write_osc_i32() {
     let expected = ~[00u8, 0x11u8, 0x22u8, 0x33u8];
     let mut writer = MemWriter::new();
-    fail_if_err!((0x00112233).write_to(&mut writer));
+    (0x00112233).write_to(&mut writer).unwrap(); // fail if err
 
     assert_eq!(writer.unwrap(), expected);
   }
@@ -284,7 +275,7 @@ mod test {
   fn test_write_osc_f32() {
     let expected = ~[63u8, 157u8, 243u8, 182u8];
     let mut writer = MemWriter::new();
-    fail_if_err!((1.234).write_to(&mut writer));
+    (1.234).write_to(&mut writer).unwrap(); // fail if err
 
     assert_eq!(writer.unwrap(), expected);
   }
@@ -305,7 +296,7 @@ mod test {
     let expected = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
     let mut writer = MemWriter::new();
     let msg = OscMessage { address: ~"/test/do", arguments: ~[~~"Hello" as ~OscType, ~~"world" as ~OscType] };
-    fail_if_err!(msg.write_to(&mut writer));
+    msg.write_to(&mut writer).unwrap(); // fail if err
     assert_eq!(writer.unwrap(), expected);
   }
 
