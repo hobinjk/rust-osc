@@ -1,6 +1,6 @@
 #[feature(macro_rules)];
 
-use osc::{OscType, OscMessage};
+use osc::{OscType, OscMessage, OscString, OscInt, OscFloat, OscBlob};
 use std::io::net::ip::{Ipv4Addr, SocketAddr};
 use std::io::net::udp::{UdpSocket};
 use std::io::timer;
@@ -57,7 +57,7 @@ fn main() {
   spawn(proc() {
     let mut udpStream = writeSocket.connect(remoteAddr);
     loop {
-      let msg = OscMessage { address: ~"/test", arguments: ~[~~"Hello" as ~OscType, ~~"World" as ~OscType] };
+      let msg = OscMessage { address: ~"/test", arguments: ~[OscString(~"Hello"), OscInt(4)] };
       msg.write_to(&mut udpStream).unwrap();
       println!("send {}: {:?}", msg.address, msg.arguments);
       timer::sleep(500);

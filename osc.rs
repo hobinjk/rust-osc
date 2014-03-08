@@ -2,6 +2,7 @@
 
 use std::str;
 use std::io;
+use std::vec;
 use std::io::{Writer, IoResult, Reader, InvalidInput};
 use std::result::{Err, Ok};
 
@@ -14,42 +15,142 @@ macro_rules! unwrap_return_err(
   );
 )
 
-
-pub trait OscType : Send {
-  fn write_to(&self, out: &mut Writer) -> IoResult<()>;
-  fn type_tag(&self) -> char;
-  fn from_reader(reader: &mut Reader) -> IoResult<Self>;
+pub enum OscType {
+  OscString(~str),
+  OscInt(i32),
+  OscFloat(f32),
+  OscBlob(~[u8])
 }
 
-impl OscType for ~str {
-  fn write_to(&self, out: &mut Writer) -> IoResult<()> {
-    let mut len = self.len() + 1;
-    let instr_len = self.len();
+impl OscType {
+  #[inline]
+  pub fn unwrap_string(self) -> ~str {
+    match self {
+      OscString(val) => val,
+      _ => fail!("attempt to unwrap a not string as a string")
+    }
+  }
+
+  #[inline]
+  pub fn unwrap_blob(self) -> ~[u8] {
+    match self {
+      OscBlob(val) => val,
+      _ => fail!("attempt to unwrap a not blob as a blob")
+    }
+  }
+
+  #[inline]
+  pub fn unwrap_int(self) -> i32 {
+    match self {
+      OscInt(val) => val,
+      _ => fail!("attempt to unwrap a not string as a string")
+    }
+  }
+
+  #[inline]
+  pub fn unwrap_float(self) -> f32 {
+    match self {
+      OscFloat(val) => val,
+      _ => fail!("attempt to unwrap a not float as a float")
+    }
+  }
+}
+// using traits to define methods on base traits
+// using enums to denote types instead of implementing the types
+// themselves
+//
+// Approaches:
+//  writer.write_osc(stuff):
+//    idiomatic-ish, short, uses type detection
+//    weird to implement apparently
+//
+//  stuff.write_to(writer):
+//    icky but easy to implement
+//  writer.write(stuff.into_bytes()):
+//    no, memory waste everywhere
+//  OscWriter::new(writer).write(stuff):
+//    type checking, possible ickiness
+
+pub struct OscWriter<'a> {
+  priv wr: &'a mut Writer
+}
+
+impl <'a> OscWriter<'a> {
+  fn new<'a>(wr: &'a mut Writer) -> OscWriter<'a> {
+    OscWriter {wr: wr}
+  }
+
+  pub fn write(&mut self, osc: &OscType) -> IoResult<()> {
+    match osc {
+      &OscString(ref val) => self.write_osc_string(val),
+      &OscInt(val) => self.write_osc_int(val),
+      &OscFloat(val) => self.write_osc_float(val),
+      &OscBlob(ref val) => self.write_osc_blob(val)
+    }
+  }
+
+
+  fn write_osc_string(&mut self, oscStr: &~str) -> IoResult<()> {
+    let mut len = oscStr.len() + 1;
+    let instr_len = oscStr.len();
     if len & 3 != 0 {
       // round up to nearest multiple of 4
       len = (len|3) + 1;
     }
 
-    for b in self.bytes() {
-      unwrap_return_err!(out.write_u8(b));
+    for b in oscStr.bytes() {
+      unwrap_return_err!(self.wr.write_u8(b));
     }
 
     for _ in range(instr_len, len) {
-      unwrap_return_err!(out.write_u8(0 as u8));
+      unwrap_return_err!(self.wr.write_u8(0 as u8));
     }
 
     Ok(())
   }
 
-  fn type_tag(&self) -> char {
-    return 's';
+  fn write_osc_blob(&mut self, blob: &~[u8]) -> IoResult<()> {
+    let size = blob.len();
+    match self.wr.write_be_i32(size as i32) {
+      Ok(_) => {},
+      e => return e
+    }
+    self.wr.write(*blob)
   }
 
-  fn from_reader(reader: &mut Reader) -> IoResult<~str> {
+  fn write_osc_int(&mut self, oscInt: i32) -> IoResult<()> {
+    return self.wr.write_be_i32(oscInt);
+  }
+
+  fn write_osc_float(&mut self, oscFloat: f32) -> IoResult<()> {
+    return self.wr.write_be_f32(oscFloat);
+  }
+}
+
+pub struct OscReader<'a> {
+  priv re: &'a mut Reader
+}
+
+impl<'a> OscReader<'a> {
+  pub fn new<'a>(reader: &'a mut Reader) -> OscReader<'a> {
+    OscReader {re: reader}
+  }
+
+  pub fn read(&mut self, typetag: char) -> IoResult<OscType> {
+    match typetag {
+      's' => self.read_osc_string(),
+      'i' => self.read_osc_int(),
+      'f' => self.read_osc_float(),
+      'b' => self.read_osc_blob(),
+      _   => Err(io::standard_error(InvalidInput))
+    }
+  }
+
+  fn read_osc_string(&mut self) -> IoResult<OscType> {
     let mut str_bytes : ~[u8] = ~[];
 
     loop {
-      match reader.read_byte() {
+      match self.re.read_byte() {
         Ok(0u8) => {
           break;
         },
@@ -66,140 +167,112 @@ impl OscType for ~str {
     }
 
     for _ in range(str_bytes.len()+1, len) {
-      match reader.read_byte() {
+      match self.re.read_byte() {
         Err(err) => return Err(err),
         _ => {}
       }
     }
 
     return match str::from_utf8_owned(str_bytes) {
-      Some(val) => Ok(val),
+      Some(val) => Ok(OscString(val)),
       None() => Err(io::standard_error(InvalidInput))
     };
   }
-}
 
-impl OscType for ~[u8] {
-  fn write_to(&self, out: &mut Writer) -> IoResult<()> {
-    let size = self.len();
-    unwrap_return_err!(out.write_be_i32(size as i32));
-    return out.write(*self)
-  }
 
-  fn type_tag(&self) -> char {
-    return 'b';
-  }
-
-  fn from_reader(reader: &mut Reader) -> IoResult<~[u8]> {
-    let len = match reader.read_be_i32() {
+  fn read_osc_blob(&mut self) -> IoResult<OscType> {
+    let len = match self.re.read_be_i32() {
       Ok(len) => len,
       Err(err) => return Err(err)
     };
 
-    return reader.read_bytes(len as uint);
+    return match self.re.read_bytes(len as uint) {
+      Ok(bytes) => Ok(OscBlob(bytes)),
+      Err(err) => Err(err)
+    };
+  }
+
+  fn read_osc_int(&mut self) -> IoResult<OscType> {
+    match self.re.read_be_i32() {
+      Ok(val) => Ok(OscInt(val)),
+      Err(err) => Err(err)
+    }
+  }
+
+  fn read_osc_float(&mut self) -> IoResult<OscType> {
+    match self.re.read_be_f32() {
+      Ok(val) => Ok(OscFloat(val)),
+      Err(err) => Err(err)
+    }
   }
 }
 
-impl OscType for i32 {
-  fn write_to(&self, out: &mut Writer) -> IoResult<()> {
-    return out.write_be_i32(*self);
-  }
-
-  fn type_tag(&self) -> char {
-    return 'i';
-  }
-
-  fn from_reader(reader: &mut Reader) -> IoResult<i32> {
-    return reader.read_be_i32();
-  }
+// drawback, no specific method accesses
+pub fn get_type_tag(osc: &OscType) -> u8 {
+  return match osc {
+    &OscString(_) => 's' as u8,
+    &OscInt(_)    => 'i' as u8,
+    &OscFloat(_)  => 'f' as u8,
+    &OscBlob(_)   => 'b' as u8
+  };
 }
-
-impl OscType for f32 {
-  fn write_to(&self, out: &mut Writer) -> IoResult<()> {
-    return out.write_be_f32(*self);
-  }
-
-  fn type_tag(&self) -> char {
-    return 'f';
-  }
-
-  fn from_reader(reader: &mut Reader) -> IoResult<f32> {
-    return reader.read_be_f32();
-  }
-}
-
-
 
 pub struct OscMessage {
   // structure: addr pattern string tt string, zero or more arguments
   address: ~str,
-  arguments: ~[~OscType]
-}
-
-fn make_osc_result<T: OscType>(result: IoResult<T>) -> IoResult<~OscType> {
-  match result {
-    Err(err) => return Err(err),
-    Ok(val) => return Ok(~val as ~OscType)
-  }
-}
-
-fn osctype_from_typetag_and_reader(typetag: u8, reader: &mut Reader) -> IoResult<~OscType> {
-  match typetag as char {
-    'f' => {
-      let ret: IoResult<f32> = OscType::from_reader(reader);
-      return make_osc_result(ret);
-    },
-    'i' => {
-      let ret: IoResult<i32> = OscType::from_reader(reader);
-      return make_osc_result(ret);
-    },
-    's' => {
-      let ret: IoResult<~str> = OscType::from_reader(reader);
-      return make_osc_result(ret);
-    },
-    'b' => {
-      let ret: IoResult<~[u8]> = OscType::from_reader(reader);
-      return make_osc_result(ret);
-    }
-
-    t => {
-      fail!(format!("No implementation of typetag: {}", t));
-    }
-  }
-
+  arguments: ~[OscType]
 }
 
 impl OscMessage {
-  pub fn write_to(&self, out: &mut Writer) -> IoResult<()> {
-    unwrap_return_err!(self.address.write_to(out));
+  pub fn write_to(&self, outWriter: &mut Writer) -> IoResult<()> {
+    let mut out = OscWriter::new(outWriter);
+    unwrap_return_err!(out.write(&OscString(self.address.clone())));
     // typetag string is ",[isfb]*"
     let mut typetags = ~[',' as u8];
     for arg in self.arguments.iter() {
-      typetags.push(arg.type_tag() as u8);
+      typetags.push(get_type_tag(arg) as u8);
     }
 
     let typetags_str = str::from_utf8_owned(typetags);
     match typetags_str {
-      Some(tt) => unwrap_return_err!(tt.write_to(out)),
+      Some(tt) => unwrap_return_err!(out.write(&OscString(tt))),
       None() => return Err(io::standard_error(InvalidInput))
     }
 
     for arg in self.arguments.iter() {
-      unwrap_return_err!(arg.write_to(out));
+      unwrap_return_err!(out.write(arg));
     }
 
     Ok(())
   }
 
-  pub fn from_reader(reader: &mut Reader) -> IoResult<~OscMessage> {
-    let address: ~str = unwrap_return_err!(OscType::from_reader(reader));
-    let typetags: ~str = unwrap_return_err!(OscType::from_reader(reader));
+  pub fn from_reader(re: &mut Reader) -> IoResult<~OscMessage> {
+    let mut reader = OscReader::new(re);
+    let address = match reader.read('s') {
+      Err(err) => return Err(err),
+      Ok(val) => match val {
+        OscString(valStr) => valStr,
+        _ => ~""
+      }
+    };
+
+    let typetags = match reader.read('s') {
+      Err(err) => return Err(err),
+      Ok(val) => match val {
+        OscString(valStr) => valStr,
+        _ => ~""
+      }
+    };
+
     println!("addr: {}", address);
     println!("tt: {}", typetags);
-    let arguments: ~[~OscType] = typetags.slice_from(1).bytes().map(|typetag| match osctype_from_typetag_and_reader(typetag, reader) {
-      Ok(ot) => ot,
-      Err(err) => fail!("panicked on error: {}", err)
-    }).to_owned_vec();
+    let mut arguments: ~[OscType] = vec::with_capacity(typetags.len()-1);
+    for typetag in typetags.slice_from(1).bytes() {
+      arguments.push(match reader.read(typetag as char) {
+        Ok(ot) => ot,
+        Err(err) => fail!("panicked on error: {}", err)
+      });
+    }
     return Ok(~OscMessage { address: address, arguments: arguments });
   }
 }
@@ -213,7 +286,8 @@ mod test {
   fn test_write_osc_string() {
     let expected = (~"asdf\0\0\0\0").into_bytes();
     let mut writer = MemWriter::new();
-    (~"asdf").write_to(&mut writer).unwrap(); // fail if err returned
+    let mut oscWriter = OscWriter::new(writer);
+    oscWriter.write(&OscString(~"asdf")).unwrap(); // fail if err returned
 
     assert_eq!(writer.unwrap(), expected);
   }
@@ -222,14 +296,14 @@ mod test {
   fn test_read_osc_string() {
     let data = (~"asdf\0\0\0\0").into_bytes();
     let mut reader = MemReader::new(data);
-    let actual: IoResult<~str> = OscType::from_reader(&mut reader);
+    let actual: IoResult<OscType> = reader.read_osc('s');
     match actual {
-      Ok(val) => assert_eq!(val, ~"asdf"),
+      Ok(OscString(val)) => assert_eq!(val, ~"asdf"),
       e => fail!("error: {}", e)
     }
   }
 
-
+/*
   #[test]
   fn test_write_osc_blob() {
     let expected = ~[0u8, 0u8, 0u8, 5u8, 1u8, 2u8, 3u8, 4u8, 5u8];
@@ -290,12 +364,12 @@ mod test {
       e => fail!("error: {}", e)
     }
   }
-
+*/
   #[test]
   fn test_write_osc_message() {
     let expected = (~"/test/do\0\0\0\0,ss\0Hello\0\0\0world\0\0\0").into_bytes();
     let mut writer = MemWriter::new();
-    let msg = OscMessage { address: ~"/test/do", arguments: ~[~~"Hello" as ~OscType, ~~"world" as ~OscType] };
+    let msg = OscMessage { address: ~"/test/do", arguments: ~[OscString("Hello"), OscString("world")] };
     msg.write_to(&mut writer).unwrap(); // fail if err
     assert_eq!(writer.unwrap(), expected);
   }
